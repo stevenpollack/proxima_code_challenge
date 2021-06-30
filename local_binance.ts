@@ -1,20 +1,39 @@
 import * as WebSocket from 'ws';
 import fetch from 'node-fetch'
+import * as clc from 'cli-color'
 
-interface Diff {
-    "event": string;
-    "eventTime": number;
-    "symbol": string;
-    "firstUpdateId": number;
-    "finalUpdateId": number;
-    "bids": Array<Array<string>>;
-    "asks": Array<Array<string>>;
+const ORDER_QUANTITY = Number(process.argv[2]) || 0.1
+const TICKER = 'BTCUSDT';
+const SPEED = '100ms';
+
+function writePrices(sell, buy, txTime) {
+  process.stdout.write(clc.erase.line);
+  process.stdout.write(clc.move.lineBegin);
+  process.stdout.write(clc.red("Sell price: " + sell));
+  process.stdout.write(`  |  `);
+  process.stdout.write(clc.green("Buy price: " + buy));
+  process.stdout.write(`  |  ${txTime}`);
 }
+class Diff {
+    event: string;
+    eventTime: number;
+    symbol: string;
+    firstUpdateId: number;
+    finalUpdateId: number;
+    bids: Array<Array<string>>;
+    asks: Array<Array<string>>;
 
-const TICKER = 'btcusdt';
-const LEVEL = ''//5;
-const SPEED = '1000ms';
-const ORDER_QUANTITY = 1
+    constructor (stream: any) {
+        const data = JSON.parse(stream)
+        this.event = data.e
+        this.eventTime = data.E
+        this.symbol = data.s
+        this.firstUpdateId = data.U
+        this.finalUpdateId = data.u
+        this.bids = data.b
+        this.asks = data.a
+    }
+}
 
 class OrderBook {
     lastUpdateId: number;
@@ -42,15 +61,25 @@ class OrderBook {
               this[side].push([price, quantity])
             }
           })
-          // clean up: filter out empty prices and sort
-          this[side] = this[side].filter(([price, quantity]) => Number(quantity) > 0)
-                        .sort((a, b) => side === 'asks' ? a[0] > b[0] : b[0] > a[0])
+          // clean up: filter out empty prices and sort such that largest bid and smallest ask
+          // are at the end of their arrays.
+          this[side] = this[side].filter(([price, quantity]) => Number(quantity) > 0);
+          this[side].sort((a, b) =>  {
+            const prevPrice = Number(a[0])
+            const nextPrice = Number(b[0])
+            if (side === 'bids') {
+              return nextPrice - prevPrice
+            } else {
+              return prevPrice - nextPrice;
+            }
+            // side === 'asks' ? b[0] > a[0] : b[0] < a[0]
+          });
         })
     }
 
-    calculateAverageOrderPrice (orderQty: number) {
-        orderQty = orderQty || ORDER_QUANTITY;
+    calcAvgPrice (orderQty: number) {
         const sides = ['bids', 'asks'];
+        const avgPrices = { bids: 0, asks: 0}
         sides.forEach(side => {
           let currentQty = 0
           let index = 0
@@ -71,94 +100,61 @@ class OrderBook {
           filledOrder.forEach(([fillPrice, fillQuantity]) => {
             averagePrice += fillPrice * (fillQuantity / orderQty);
           })
-          
-          console.log(side === 'bids' ? 'Sell' : 'Buy', filledOrder, averagePrice)
-          // if (currentOrderQuantity <= quantity) { shiftArray } 
+          avgPrices[side] = averagePrice
         })
+        writePrices(avgPrices.bids, avgPrices.asks, this.finalUpdateId)
+    }
+
+    processDiff (diff: Diff) {
+        if (diff.finalUpdateId <= this.lastUpdateId) {
+          return
+        }
+        const beginStream = diff.firstUpdateId <= (this.lastUpdateId + 1) && diff.finalUpdateId >= (this.lastUpdateId + 1);
+        const inStream = this.finalUpdateId && this.finalUpdateId + 1 === diff.firstUpdateId;
+        if (beginStream || inStream) {
+          this.applyDiff(diff)
+          this.calcAvgPrice(ORDER_QUANTITY);
+        }
+    }
+
+    recursiveProcess(side: Array<Array<string>>, filledQty: number, remainingQty: number) {
+        if (side.length === 0) {
+            return 0;
+        }
+        const topBid = side.pop();
+        let bidPrice = Number(topBid[0]);
+        let bidQty = Number(topBid[1]);
+        if (bidQty < remainingQty) {
+            return bidQty*bidPrice + this.recursiveProcess(side, filledQty + bidQty, remainingQty - bidQty)
+        } else if (bidQty > remainingQty) {
+            side.push([bidPrice.toString(), (bidQty - remainingQty).toString()])
+            return bidPrice * remainingQty;
+        } else {
+            return bidQty*bidPrice;
+        }
     }
 }
-
-function diffMapper (stream: any): Diff {
-  const data = JSON.parse(stream)
-  return {
-    "event": data.e,
-    "eventTime": data.E,
-    "symbol": data.s,
-    "firstUpdateId": data.U,
-    "finalUpdateId": data.u,
-    "bids": data.b,
-    "asks": data.a
-  }
-}
-
-
-
-function processDiffStream (orderBook, diff: Diff) {
-  if (diff.finalUpdateId <= orderBook.lastUpdateId) {
-    return
-  }
-  if (diff.firstUpdateId <= (orderBook.lastUpdateId + 1) && diff.finalUpdateId >= (orderBook.lastUpdateId + 1)) {
-    // this is our first event, we need to get the orderBook up to date
-    // console.log('tick', diff.firstUpdateId, orderBook.lastUpdateId + 1, diff.finalUpdateId)
-    // console.log(diff)
-    orderBook.applyDiff(diff)
-    orderBook.calculateAverageOrderPrice();
-    // processSide(orderBook.bids, 0, ORDER_QUANTITY)
-    // processSide(orderBook.asks, 0, ORDER_QUANTITY)
-    // console.log(orderBook)
-  }
-
-  if (orderBook.finalUpdateId && orderBook.finalUpdateId + 1 === diff.firstUpdateId) {
-    // we are in the stream now
-    // console.log('tock', orderBook.finalUpdateId, diff.firstUpdateId, diff.finalUpdateId)
-    orderBook.applyDiff(diff)
-    orderBook.calculateAverageOrderPrice();
-  }
-}
-
-let testBids =     [
-    [ '34833.20000000', '0.28984100' ],
-[ '34833.62000000', '0.08612400' ],
-[ '34833.63000000', '0.02300000' ],
-[ '34834.08000000', '0.31783900' ],
-[ '34834.14000000', '0.23110000' ],
-[ '34834.44000000', '0.31709000' ],
-[ '34834.57000000', '0.02996500' ]]
-
-function processSide(side, filledQty, remainingQty) {
-    const topBid = side.shift();
-    if (!topBid) {
-        return 0;
-    }
-    let bidPrice = Number(topBid[0]);
-    let bidQty = Number(topBid[1]);
-    if (bidQty < remainingQty) {
-        return bidQty*bidPrice + processSide(side, filledQty + bidQty, remainingQty - bidQty)
-    } else if (bidQty > remainingQty) {
-        side.unshift([bidPrice, bidQty - remainingQty])
-        return bidPrice * remainingQty;
-    } else {
-        return bidQty*bidPrice;
-    }
-}
-
-// 1.2949590
-
-
 
 async function Main() {
-  const binanceWebSocket = `wss://stream.binance.com:9443/ws/${TICKER}@depth${LEVEL}@${SPEED}`;
+  const binanceWebSocket = `wss://stream.binance.com:9443/ws/${TICKER.toLowerCase()}@depth@${SPEED}`;
   const ws = new WebSocket(binanceWebSocket);
-  const response = await fetch(`https://api.binance.com/api/v3/depth?symbol=${TICKER.toUpperCase()}&limit=1000`);
-  const orderBook = new OrderBook(await response.json());
-  const { lastUpdateId } = orderBook;
-  // console.log('start', orderBook.lastUpdateId);
-  ws.on('message', data => {
-    const diff = diffMapper(data)
-    processDiffStream(orderBook, diff)
+  let orderBook;
+  let previousDiffs = []
+  
+  ws.on('message', async function (data) {
+    const diff = new Diff(data);
+    if (typeof orderBook === 'undefined') {
+      previousDiffs.push(diff)
+      const response = await fetch(`https://api.binance.com/api/v3/depth?symbol=${TICKER}&limit=1000`);
+      orderBook = new OrderBook(await response.json());
+      return;
+    }
+    if (previousDiffs.length) {
+      previousDiffs.forEach(prevDiff => orderBook.processDiff(prevDiff))
+      previousDiffs = []
+    }
+    orderBook.processDiff(diff);
   })
-  // console.log(processSide(testBids, 0, 1));
-  // console.log(calculateAverageOrderPrice({ bids: testBids }))
 }
 
 Main()
