@@ -1,2 +1,6 @@
 # proxima_code_challenge
-Local Binance Orderbook
+
+Pass your BTC quantity via the CLI:
+```
+npm run dev BTC_QTY
+```
