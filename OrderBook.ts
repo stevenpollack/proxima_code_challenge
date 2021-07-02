@@ -5,7 +5,7 @@ import * as clc from 'cli-color'
 export type Order = [string, string];
 
 // Order[] helper functions
-function updateSide(side: Order[], diff: Order[], sortOrder: string): Order[] {
+export function updateSide(side: Order[], diff: Order[], sortOrder: string): Order[] {
     diff.forEach(order => {
         const index = side.findIndex(val => order[0] === val[0]);
         if (index === -1) {
@@ -33,11 +33,11 @@ function updateSide(side: Order[], diff: Order[], sortOrder: string): Order[] {
     return newSide;
 }
 
-function calcAvgPrice(side: Order[], qty: number): number {
+export function calcAvgPrice(side: Order[], qty: number): number {
     let filledQty = 0;
     let avgPrice = 0;
     let orderIndx = 0;
-    while (filledQty < qty) {
+    while (filledQty < qty && orderIndx < side.length) {
         const order = side[orderIndx];
         const price = Number(order[0]);
         const orderQty = Number(order[1]);
@@ -49,6 +49,9 @@ function calcAvgPrice(side: Order[], qty: number): number {
             avgPrice += price * ((qty - filledQty) / qty)
             filledQty = qty;
         }
+    }
+    if (orderIndx === side.length) {
+        throw new Error('side does not have enough depth to fill quantity!');
     }
     return avgPrice;
 }
@@ -92,7 +95,7 @@ export class OrderBook extends Market {
         process.stdout.write(clc.green(`Buy: ${this.avgBuy.toFixed(2)} vs. ${bestBuyPrice}`));
         process.stdout.write(clc.white(` | `));
         process.stdout.write(clc.red(`Sell: ${this.avgSell.toFixed(2)} vs. ${bestSellPrice}`));
-        process.stdout.write(clc.white(` | ${this.lastUpdateId}`));
+        process.stdout.write(clc.white(` | txId: ${this.lastUpdateId}`));
     }
 }
 

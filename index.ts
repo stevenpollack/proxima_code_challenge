@@ -4,7 +4,7 @@ import { OrderBook, Diff } from './OrderBook';
 
 const ORDER_QTY = Number(process.argv[2]);
 const TICKER = 'BTCUSDT'
-const binanceSnapshot = `https://api.binance.com/api/v3/depth?symbol=${TICKER}&limit=100`;
+const binanceSnapshot = `https://api.binance.com/api/v3/depth?symbol=${TICKER}&limit=10`;
 const binanceWSS = `wss://stream.binance.com:9443/ws/${TICKER.toLowerCase()}@depth`;
 
 let orderbook: OrderBook;
@@ -17,40 +17,20 @@ ws.on('open', async function open() {
 });
 
 ws.on('message', (wsData: WebSocket.Data) => {
-    // console.log(orderbook);
     let data = JSON.parse(wsData.toString());
-    if ( typeof orderbook === undefined ||
+    if ( typeof orderbook === 'undefined' ||
         data.u <= orderbook.lastUpdateId ) {
         return;
     }
+    
     const lastUpdateId = orderbook.lastUpdateId;
     const dataStraddlesSnapshot = 
         data.U <= lastUpdateId && lastUpdateId + 1 <= data.u;
     const dataLeadsSnapshot = lastUpdateId + 1 <= data.U;
     if (dataStraddlesSnapshot || dataLeadsSnapshot) {
-        // console.log(data.U, lastUpdateId, data.u);
         const diff = new Diff(data);
         orderbook.applyDiff(diff);
         orderbook.calcAvgBuyAndSell(ORDER_QTY, true);
     }
 
 });
-
-
-// let test: Order[] = [
-//     ['10', '0.1'],
-//     ['11', '0.1'],
-//     ['12', '0.1'],
-//     ['13', '0.1'],
-//     ['14', '0.1']
-// ];
-
-// let diff: Order[] = [
-//     ['9', '0.1'],
-//     ['10', '0'],
-//     ['11', '0'],
-//     ['12', '0.1'],
-//     ['13', '0.1'],
-//     ['14', '0.1'],
-// ]
-// console.log(calcAvgPrice(test, 0.35) );

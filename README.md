@@ -2,5 +2,5 @@
 
 Pass your BTC quantity via the CLI:
 ```
-npm run dev BTC_QTY
+npx ts-node index.ts BTC_QTY
 ```
